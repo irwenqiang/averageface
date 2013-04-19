@@ -15,3 +15,4 @@ Requirements
 
 - add cache for features detecting
 - both eyes and nose of a face are aligned for better image quality
+- more robust when handling large amount of pictures
