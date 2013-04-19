@@ -1,86 +1,170 @@
-#/usr/bin/env python
-
+#!/usr/bin/env python2
+# coding: UTF-8
+#
+# an average face generator using opencv and PIL
+# 
+# ref:
+#     https://github.com/ruoat/averageface
+#     http://www.mathworks.cn/matlabcentral/fileexchange/28927
+# 
+import os
+import sys
+import glob
+import shelve
 import numpy as np
 import cv2
-import math
-import sys, glob
+import cv2.cv as cv
+import Image
+import ImageFilter
 
-help_message = '''
-USAGE:   averageface.py pathname
-EXAMPLE: averageface.py /tmp/faces/*.jpg
-OUTPUT:  average.jpg 
-'''
+nose_classifier_filename = './haarcascade_mcs_nose.xml'
+eyes_classifier_filename = "./haarcascade_eye.xml"
+cache_shelve_path = '.cache.shelve'
+test_faces = '/tmp/faces/*'
 
-def detect(img, cascade):
-    # Possible optimizations for detection
-    #img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    #img = cv2.equalizeHist(img)
-    
-    #rects = cascade.detectMultiScale(img)
-    rects = cascade.detectMultiScale(img, scaleFactor=1.3, minNeighbors=4, minSize=(30, 30), flags = 0)
-    if len(rects) == 0:
-        return []
- 
-    return rects
-    
-def draw_eyepositions(img, eyepositions, color):
-    for x, y in eyepositions:
-        cv2.rectangle(img, (x, y), (x, y), color, 2)
+def detect_nose(img,cascade=cv2.CascadeClassifier(nose_classifier_filename)):
+    rects = cascade.detectMultiScale(img, scaleFactor=1.1, minNeighbors=1, minSize=(2, 2), flags = cv.CV_HAAR_SCALE_IMAGE)
+    assert len(rects) >= 1, "fail to detect any noses"
+    nosepositions = rects[:,:2] + rects[:,2:] / 2 #center of each nose
+    nose_position = nosepositions[0]
+    nose_position = np.array(nose_position)
+    return nose_position
+    #for (x, y) in nosepositions:
+    #    cv2.rectangle(img, (x, y), (x, y),(0, 100, 0), 5)
+    #cv2.imwrite("/tmp/img.jpg",img)
+    #Image.open('/tmp/img.jpg').show()
 
-def detect_eyepositions_from_image(img, cascade):
-    rects = detect(img, cascade)
-    if len(rects) != 2:
-        return []
-    eyepositions = rects[:,:2] + rects[:,2:] / 2
-   
-    # sort array to contain left eye first, then right
-    if eyepositions[0,0] > eyepositions[1,0]:
-        eyepositions = eyepositions[::-1]
-        
-    return eyepositions
-    
-def get_imageinfo_from_files(files, cascade):
-    result = []
-    for filename in files:
-        #print "Processing " + filename
-        img = cv2.imread(filename)
-        width = img.shape[1]
-        height = img.shape[0]
-        eyepositions = detect_eyepositions_from_image(img, cascade)
-       
-        if len(eyepositions) == 2:
-            result.append((filename, width, height, eyepositions))
+def detect_eyes(img, cascade=cv2.CascadeClassifier(eyes_classifier_filename)):
+    rects = cascade.detectMultiScale(img, scaleFactor=1.1, minNeighbors=1, minSize=(2, 2), flags = cv.CV_HAAR_SCALE_IMAGE)
+    assert len(rects) >= 2, "fail to detect any eyes"
+    eyepositions = rects[:,:2] + rects[:,2:] / 2 #center of each eye
+    eye_pairs = []
+    for i, a in enumerate(eyepositions):
+        for b in eyepositions[i+1:]:
+            if abs(a[1] - b[1]) < 5 and abs(a[0] - b[0]) > 10:
+                if a[0] > b[0]:a, b = b, a 
+                eye_pairs.append((a, b))
+    if len(eye_pairs) == 0:
+        raise ValueError, "fail to detect any eyes"
+    eyes = max(eye_pairs, key = lambda p: abs(p[0][0] - p[1][0]))
+    l, r = eyes
+    l = np.array(l)
+    r = np.array(r)
+    return l, r
+    #(lx, ly), (rx, ry) = eyes
+    #cv2.rectangle(img, (lx, ly), (lx, ly),(0, 255, 0), 5)
+    #cv2.rectangle(img, (rx, ry), (rx, ry),(0, 0, 255), 5)
+    #cv2.imwrite("/tmp/img.jpg",img)
+    #Image.open('/tmp/img.jpg').show()
+
+def get_image_info(pathname):
+    files = glob.glob(pathname)
+    image_info = []
+    fh = shelve.open(cache_shelve_path)
+    cache = fh.get('af', {})
+    for img_path in files:
+        c = cache.get(img_path)
+        if c is not None:
+            image_info.append(c)
+            continue
+        try:
+            assert os.path.exists(img_path)
+            img = cv2.imread(img_path)
+            nose_pos = detect_nose(img)
+            lefteye_pos, righteye_pos = detect_eyes(img)
+            width = img.shape[1]
+            height = img.shape[0]
+
+            assert lefteye_pos[0] < nose_pos[0] < righteye_pos[0]
+            assert lefteye_pos[1] < nose_pos[1]
+            assert righteye_pos[1] < nose_pos[1]
+        except:
+            continue
         else:
-            print "Could not find two eyes for " + filename + "! ignoring it."
-    return result
-    
-def mergeimages(imageinfo, eye_center, target_width, target_height, cascade):
-    print "Merging " + str(len(imageinfo)) + " images to size " + str(target_width) + "," + str(target_height)
-    average_image = np.empty([target_height, target_width, 3])
-    average_eye_x_distance = eye_center[1][0] - eye_center[0][0]
-    print "average_eye_x_dist " + str(average_eye_x_distance)
-    ok_faces = 0
-    for filename, width, height, eyeposition in imageinfo:
-        eye_x_distance = eyeposition[1][0] - eyeposition[0][0]
-        #print "orig eye_distance " + str(eye_x_distance)
-        resize_factor = average_eye_x_distance / float(eye_x_distance)
-        #resize_factor = 1
-        
-        img = cv2.imread(filename)
-        if (resize_factor != 1):
-            #print "Resizing " + filename + " with factor " + str(resize_factor)
-            #print "original eyeposition " + str(eyeposition)
-            img = cv2.resize(img, (int(img.shape[1] * resize_factor), int(img.shape[0] * resize_factor)))
-            eyeposition = detect_eyepositions_from_image(img, cascade)
-            if len(eyeposition) != 2:
-                print "Could not find two eyes after resize for " + filename + "!"
-                continue
-            eye_x_distance = eyeposition[1][0] - eyeposition[0][0]
-            
-    
-        diff = eye_center - eyeposition
-        x_diff = (diff[0][0] + diff[1][0]) / 2
-        y_diff = (diff[0][1] + diff[1][1]) / 2
+            image_info.append((img_path, width, height, nose_pos, lefteye_pos, righteye_pos))
+            cache[img_path] = (img_path, width, height, nose_pos, lefteye_pos, righteye_pos)
+    fh['af'].update(cache)
+    fh.close()
+    return image_info
+
+def calculate_average(image_info):
+    average_width = np.double(0.0)
+    average_height = np.double(0.0)
+    average_nose_pos = np.double(0.0)
+    average_lefteye_pos = np.double(0.0)
+    average_righteye_pos = np.double(0.0)
+
+    for i, (img_path, width, height, nose_pos, lefteye_pos, righteye_pos) in enumerate(image_info):
+        average_width = 1. * (average_width * i + width) / (i + 1)
+        average_height = 1. * (average_height* i + height) / (i + 1)
+        average_nose_pos = 1. * (average_nose_pos* i + nose_pos) / (i + 1)
+        average_lefteye_pos = 1. * (average_lefteye_pos* i + lefteye_pos) / (i + 1)
+        average_righteye_pos= 1. * (average_righteye_pos* i + righteye_pos) / (i + 1)
+
+    average_width = average_width.astype(int)
+    average_height = average_height.astype(int)
+    average_nose_pos = average_nose_pos.astype(int)
+    average_lefteye_pos = average_lefteye_pos.astype(int)
+    average_righteye_pos = average_righteye_pos.astype(int)
+
+    return average_width, average_height, average_nose_pos, average_lefteye_pos, average_righteye_pos
+   
+
+def test():
+    img_path = np.random.choice(glob.glob(test_faces))
+    img = cv2.imread(img_path)
+    try:
+        nose_pos = detect_nose(img)
+        lefteye_pos, righteye_pos = detect_eyes(img)
+        print nose_pos
+        print lefteye_pos, righteye_pos
+        assert lefteye_pos[0] < nose_pos[0] < righteye_pos[0]
+        assert lefteye_pos[1] < nose_pos[1]
+        assert righteye_pos[1] < nose_pos[1]
+    except Exception, e:
+        print e
+        pass
+    else:
+        nose_pos = tuple(nose_pos)
+        lefteye_pos = tuple(lefteye_pos)
+        righteye_pos= tuple(righteye_pos)
+        cv2.rectangle(img, nose_pos, nose_pos,(0, 100, 0), 5)
+        cv2.rectangle(img, lefteye_pos, lefteye_pos,(0, 100, 0), 5)
+        cv2.rectangle(img, righteye_pos, righteye_pos,(0, 100, 0), 5)
+        cv2.imwrite("/tmp/img.jpg",img)
+        Image.open('/tmp/img.jpg').show()
+
+
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print 'Usage: python %s "/path/support/wildcard/foo*bar.png" output.png' % (sys.argv[0])
+        sys.exit()
+
+    print 'extract eyes features and nose features ...'
+    image_info = get_image_info(sys.argv[1])
+
+    average_width, average_height, average_nose_pos, average_lefteye_pos, average_righteye_pos = calculate_average(image_info)
+    average_eye_width = average_righteye_pos[0] - average_lefteye_pos[0]
+    average_nose_height = average_nose_pos[1] - (average_lefteye_pos[1] + average_righteye_pos[1]) / 2
+
+    average_image = np.empty([average_height, average_width, 3])
+    print 'generating average face using %s images...' % len(image_info) 
+    for i, (img_path, width, height, nose_pos, lefteye_pos, righteye_pos) in enumerate(image_info):
+        eye_width = righteye_pos[0] - lefteye_pos[0]
+        nose_height = nose_pos[1] - (lefteye_pos[1] + righteye_pos[1]) / 2
+        resize_factor = (average_eye_width * 1.0 / eye_width, average_nose_height * 1.0 / nose_height)
+        img = cv2.imread(img_path)
+        if resize_factor != (1.0, 1.0):
+            width = int(round(width * resize_factor[0]))
+            height = int(round(height * resize_factor[1]))
+            nose_pos = (nose_pos * resize_factor).astype(int)
+            lefteye_pos = (lefteye_pos * resize_factor).astype(int)
+            righteye_pos = (righteye_pos * resize_factor).astype(int)
+            img = cv2.resize(img, (width, height))
+
+        x_diff = average_lefteye_pos[0] - lefteye_pos[0]
+        y_diff = average_lefteye_pos[1] - lefteye_pos[1]
+
 
         if (x_diff >= 0):
             source_x_offset = 0
@@ -88,73 +172,27 @@ def mergeimages(imageinfo, eye_center, target_width, target_height, cascade):
         else:
             source_x_offset = abs(x_diff)
             target_x_offset = 0
-            
+        x_size = min(average_width - target_x_offset, width - source_x_offset)
+
         if (y_diff >= 0):
             source_y_offset = 0
             target_y_offset = y_diff
         else:
             source_y_offset = abs(y_diff)
             target_y_offset = 0
-        
-        max_width = min(target_width, img.shape[1])
-        max_height = min(target_height, img.shape[0])
-        
-        if resize_factor < 1:
-            x_size = max_width * resize_factor - abs(x_diff)
-            y_size = max_height * resize_factor - abs(y_diff)
-        else:
-            x_size = max_width - abs(x_diff)
-            y_size = max_height - abs(y_diff)
-        
-        temp_image = np.empty([target_height, target_width, 3])
+        y_size = min(average_height - target_y_offset, height - source_y_offset)
+
+        temp_image = np.empty([average_height, average_width,3])
         temp_image.fill(255)
         
-        temp_image[target_y_offset:target_y_offset + y_size, target_x_offset:target_x_offset + x_size] = img[source_y_offset:source_y_offset + y_size, source_x_offset:source_x_offset + x_size]
+        temp_image[target_y_offset:target_y_offset+y_size, target_x_offset:target_x_offset+x_size] = \
+                img[source_y_offset:source_y_offset+y_size, source_x_offset:source_x_offset+x_size]
     
-        average_image += temp_image
-        ok_faces += 1
-    average_image /= ok_faces
-    print "Generated average image using " + str(ok_faces) + " images"
-    return average_image
- 
-def calculate_eye_center(imageinfo):
-    eye_center = [[0,0], [0,0]]
-    for e in imageinfo:
-        eye_center += e[3]
-    eye_center /= len(imageinfo)
-    return eye_center
+        average_image = 1. * (average_image * i + temp_image) / (i + 1)
+    average_image = average_image.astype(int)
 
-def calculate_average_size(imageinfo):
-    average_width = 0
-    average_height = 0
-    for e in imageinfo:
-        average_width += e[1]
-        average_height +=e[2]
- 
-    average_width /= len(imageinfo)
-    average_height /= len(imageinfo)
-    return average_width, average_height
- 
-if len(sys.argv) != 2:
-    print help_message
-    sys.exit(1)
-
-pathname = sys.argv[1]
-files = glob.glob(pathname)
-
-classifier_filename = "haarcascade_eye_tree_eyeglasses.xml"
-
-cascade = cv2.CascadeClassifier(classifier_filename)
-
-imageinfo = get_imageinfo_from_files(files, cascade)
-if len(imageinfo) < 2:
-    print "Sorry, could not find enough images for processing. At least two needed."
-    sys.exit(1)
-    
-#print imageinfo 
-eye_center = calculate_eye_center(imageinfo)
-#print "eye_center" + str(eye_center)
-
-average_width, average_height = calculate_average_size(imageinfo)
-average_image = mergeimages(imageinfo, eye_center, average_width, average_height, cascade)
-cv2.imwrite("average.jpg", average_image)
+    af_path = sys.argv[2]
+    cv2.imwrite(af_path, average_image)
+    img = Image.open(af_path)
+    img = img.filter(ImageFilter.MedianFilter(3))
+    img.show()
