@@ -23,3 +23,11 @@ Usage
 -----
 
     python averageface.py "/tmp/faces/*.jpg" output_average_face.jpg
+
+
+Preview
+-------
+
+a possible average face :smile:
+
+![a possible average face](http://ww1.sinaimg.cn/large/a74ecc4cjw1e3vc17rc8oj203r050dfo.jpg)
