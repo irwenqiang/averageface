@@ -1,7 +1,7 @@
 #!/usr/bin/env python2
 # coding: UTF-8
 #
-# an average face generator using opencv and PIL
+# Python tool for creating average images from faces
 # 
 # ref:
 #     https://github.com/ruoat/averageface
@@ -142,6 +142,9 @@ if __name__ == '__main__':
 
     print 'extract eyes features and nose features ...'
     image_info = get_image_info(sys.argv[1])
+    if len(image_info) == 0:
+        print '0 image exists in %s' % sys.argv[1]
+        sys.exit()
 
     average_width, average_height, average_nose_pos, average_lefteye_pos, average_righteye_pos = calculate_average(image_info)
     average_eye_width = average_righteye_pos[0] - average_lefteye_pos[0]
