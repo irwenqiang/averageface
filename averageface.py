@@ -138,18 +138,10 @@ def test():
         Image.open('/tmp/img.jpg').show()
 
 
-
-def main(argv):
-    if len(argv) != 3:
-        print 'Usage: python %s "/path/support/wildcard/foo*bar.png" output.png' % (argv[0])
-        sys.exit()
-
-    print 'extract eyes features and nose features ...'
-    pathname = argv[1]
-    files = glob.glob(pathname)
+def get_average_image(files):
     image_info = get_image_info(files)
     if len(image_info) == 0:
-        print '0 image exists in %s' % argv[1]
+        print '0 image exists'
         sys.exit()
 
     average_width, average_height, average_nose_pos, average_lefteye_pos, average_righteye_pos = calculate_average(image_info)
@@ -199,8 +191,20 @@ def main(argv):
     
         average_image = 1. * (average_image * i + temp_image) / (i + 1)
     average_image = average_image.astype(int)
+    return average_image
+    
 
+
+def main(argv):
+    if len(argv) != 3:
+        print 'Usage: python %s "/path/support/wildcard/foo*bar.png" output.png' % (argv[0])
+        sys.exit()
+
+    print 'extract eyes features and nose features ...'
+    pathname = argv[1]
     af_path = argv[2]
+    files = glob.glob(pathname)
+    average_image = get_average_image(files)
     cv2.imwrite(af_path, average_image)
     img = Image.open(af_path)
     img = img.filter(ImageFilter.MedianFilter(3))
