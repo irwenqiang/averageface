@@ -21,6 +21,7 @@ nose_classifier_filename = './haarcascade_mcs_nose.xml'
 eyes_classifier_filename = "./haarcascade_eye.xml"
 cache_shelve_path = '.cache.shelve'
 test_faces = '/tmp/faces/*'
+ERROR_FLAG = 'HEHE_ERROR'
 
 def detect_nose(img,cascade=cv2.CascadeClassifier(nose_classifier_filename)):
     rects = cascade.detectMultiScale(img, scaleFactor=1.1, minNeighbors=1, minSize=(2, 2), flags = cv.CV_HAAR_SCALE_IMAGE)
@@ -57,15 +58,15 @@ def detect_eyes(img, cascade=cv2.CascadeClassifier(eyes_classifier_filename)):
     #cv2.imwrite("/tmp/img.jpg",img)
     #Image.open('/tmp/img.jpg').show()
 
-def get_image_info(pathname):
-    files = glob.glob(pathname)
+def get_image_info(files):
     image_info = []
     fh = shelve.open(cache_shelve_path)
     cache = fh.get('af', {})
     for img_path in files:
         c = cache.get(img_path)
         if c is not None:
-            image_info.append(c)
+            if c != ERROR_FLAG:
+                image_info.append(c)
             continue
         try:
             assert os.path.exists(img_path)
@@ -79,11 +80,13 @@ def get_image_info(pathname):
             assert lefteye_pos[1] < nose_pos[1]
             assert righteye_pos[1] < nose_pos[1]
         except:
+            cache[img_path] = ERROR_FLAG
             continue
         else:
-            image_info.append((img_path, width, height, nose_pos, lefteye_pos, righteye_pos))
-            cache[img_path] = (img_path, width, height, nose_pos, lefteye_pos, righteye_pos)
-    fh['af'].update(cache)
+            info = (img_path, width, height, nose_pos, lefteye_pos, righteye_pos)
+            image_info.append(info)
+            cache[img_path] = info
+    fh['af'] = cache
     fh.close()
     return image_info
 
@@ -135,15 +138,18 @@ def test():
         Image.open('/tmp/img.jpg').show()
 
 
-if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        print 'Usage: python %s "/path/support/wildcard/foo*bar.png" output.png' % (sys.argv[0])
+
+def main(argv):
+    if len(argv) != 3:
+        print 'Usage: python %s "/path/support/wildcard/foo*bar.png" output.png' % (argv[0])
         sys.exit()
 
     print 'extract eyes features and nose features ...'
-    image_info = get_image_info(sys.argv[1])
+    pathname = argv[1]
+    files = glob.glob(pathname)
+    image_info = get_image_info(files)
     if len(image_info) == 0:
-        print '0 image exists in %s' % sys.argv[1]
+        print '0 image exists in %s' % argv[1]
         sys.exit()
 
     average_width, average_height, average_nose_pos, average_lefteye_pos, average_righteye_pos = calculate_average(image_info)
@@ -194,9 +200,13 @@ if __name__ == '__main__':
         average_image = 1. * (average_image * i + temp_image) / (i + 1)
     average_image = average_image.astype(int)
 
-    af_path = sys.argv[2]
+    af_path = argv[2]
     cv2.imwrite(af_path, average_image)
     img = Image.open(af_path)
     img = img.filter(ImageFilter.MedianFilter(3))
     img.save(af_path)
     img.show()
+
+    
+if __name__ == '__main__':
+    main(sys.argv)
