@@ -198,4 +198,5 @@ if __name__ == '__main__':
     cv2.imwrite(af_path, average_image)
     img = Image.open(af_path)
     img = img.filter(ImageFilter.MedianFilter(3))
+    img.save(af_path)
     img.show()
